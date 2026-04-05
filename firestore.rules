@@ -1,0 +1,255 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required)
+    //   - displayName: string (optional)
+    //   - role: string (required, enum: ['admin', 'manager', 'staff'])
+    //
+    // Collection: game_rates
+    // Document ID: {rateId}
+    // Fields:
+    //   - game_name: string (required)
+    //   - price_per_unit: number (required)
+    //   - unit_type: string (required, enum: ['Hour', 'Game'])
+    //   - isActive: boolean (required)
+    //
+    // Collection: game_sales_logs
+    // Document ID: {logId}
+    // Fields:
+    //   - game_id: string (required)
+    //   - game_name: string (required)
+    //   - quantity_sold: number (required)
+    //   - rate_applied: number (required)
+    //   - calculated_total: number (required)
+    //   - user_id: string (required)
+    //   - date: string (required, ISO date string)
+    //
+    // Collection: keno_logs
+    // Document ID: {logId}
+    // Fields:
+    //   - sales: number (required)
+    //   - payouts: number (required)
+    //   - net_profit: number (required)
+    //   - user_id: string (required)
+    //   - date: string (required, ISO date string)
+    //
+    // Collection: credits
+    // Document ID: {creditId}
+    // Fields:
+    //   - employee_name: string (required)
+    //   - amount: number (required)
+    //   - status: string (required, enum: ['Pending', 'Deducted'])
+    //   - user_id: string (required)
+    //   - date: string (required, ISO date string)
+    //
+    // Collection: expenses
+    // Document ID: {expenseId}
+    // Fields:
+    //   - description: string (required)
+    //   - amount: number (required)
+    //   - user_id: string (required)
+    //   - date: string (required, ISO date string)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.user_id;
+    }
+
+    function uidUnchanged() {
+      return !('user_id' in request.resource.data) || request.resource.data.user_id == request.auth.uid;
+    }
+
+    function uidNotModified() {
+      return !('user_id' in request.resource.data) || request.resource.data.user_id == resource.data.user_id;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function validStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidDateString(dateStr) {
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    function isPositive(field) {
+      return request.resource.data[field] is number && request.resource.data[field] >= 0;
+    }
+
+    // Role checks
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        getUserRole() == 'admin' ||
+        (request.auth.token.email == "bezueyob3@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isManagerOrAdmin() {
+      return isAdmin() || (isAuthenticated() && getUserRole() == 'manager');
+    }
+
+    function isStaffOrHigher() {
+      return isManagerOrAdmin() || (isAuthenticated() && getUserRole() == 'staff');
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser() {
+      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'role']) &&
+             request.resource.data.uid is string && request.resource.data.uid.size() > 0 && request.resource.data.uid.size() < 100 &&
+             isValidEmail(request.resource.data.email) &&
+             (!('displayName' in request.resource.data) || (request.resource.data.displayName is string && request.resource.data.displayName.size() < 100)) &&
+             request.resource.data.role in ['admin', 'manager', 'staff'];
+    }
+
+    function isValidGameRate() {
+      return hasOnlyAllowedFields(['game_name', 'price_per_unit', 'unit_type', 'isActive']) &&
+             validStringLength('game_name', 1, 100) &&
+             isPositive('price_per_unit') &&
+             request.resource.data.unit_type in ['Hour', 'Game'] &&
+             request.resource.data.isActive is bool;
+    }
+
+    function isValidGameSalesLog() {
+      return hasOnlyAllowedFields(['game_id', 'game_name', 'quantity_sold', 'rate_applied', 'calculated_total', 'user_id', 'date']) &&
+             validStringLength('game_id', 1, 100) &&
+             validStringLength('game_name', 1, 100) &&
+             isPositive('quantity_sold') &&
+             isPositive('rate_applied') &&
+             isPositive('calculated_total') &&
+             request.resource.data.calculated_total == request.resource.data.quantity_sold * request.resource.data.rate_applied &&
+             request.resource.data.user_id is string && request.resource.data.user_id == request.auth.uid &&
+             isValidDateString(request.resource.data.date);
+    }
+
+    function isValidKenoLog() {
+      return (hasOnlyAllowedFields(['sales', 'payouts', 'net_profit', 'user_id', 'date']) || hasOnlyAllowedFields(['sales', 'payouts', 'net_profit', 'user_id', 'date', 'verified'])) &&
+             isPositive('sales') &&
+             isPositive('payouts') &&
+             request.resource.data.net_profit is number &&
+             request.resource.data.net_profit == request.resource.data.sales - request.resource.data.payouts &&
+             request.resource.data.user_id is string && request.resource.data.user_id == request.auth.uid &&
+             (!('verified' in request.resource.data) || request.resource.data.verified is bool) &&
+             isValidDateString(request.resource.data.date);
+    }
+
+    function isValidCredit() {
+      return (hasOnlyAllowedFields(['employee_name', 'amount', 'status', 'user_id', 'date']) || hasOnlyAllowedFields(['employee_name', 'amount', 'status', 'user_id', 'date', 'resolved_date'])) &&
+             validStringLength('employee_name', 1, 100) &&
+             isPositive('amount') &&
+             request.resource.data.status in ['Pending', 'Deducted', 'Resolved'] &&
+             request.resource.data.user_id is string && request.resource.data.user_id == request.auth.uid &&
+             isValidDateString(request.resource.data.date);
+    }
+
+    function isValidExpense() {
+      return (hasOnlyAllowedFields(['description', 'amount', 'user_id', 'date']) || hasOnlyAllowedFields(['description', 'amount', 'category', 'user_id', 'date']) || hasOnlyAllowedFields(['description', 'amount', 'category', 'user_id', 'date', 'verified']) || hasOnlyAllowedFields(['description', 'amount', 'user_id', 'date', 'verified'])) &&
+             validStringLength('description', 1, 500) &&
+             isPositive('amount') &&
+             (!('category' in request.resource.data) || request.resource.data.category in ['Maintenance', 'Utilities', 'Supplies', 'Wages', 'Misc']) &&
+             request.resource.data.user_id is string && request.resource.data.user_id == request.auth.uid &&
+             (!('verified' in request.resource.data) || request.resource.data.verified is bool) &&
+             isValidDateString(request.resource.data.date);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isManagerOrAdmin();
+      allow create: if isAuthenticated() && isValidUser() && (
+        (isOwner(userId) && request.resource.data.role == 'staff') || isAdmin()
+      );
+      allow update: if isAuthenticated() && isValidUser() && (
+        (isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /game_rates/{rateId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isValidGameRate();
+    }
+
+    match /shifts/{shiftId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if isManagerOrAdmin();
+      allow write: if isAuthenticated();
+    }
+
+    match /game_sales_logs/{logId} {
+      allow read: if isStaffOrHigher();
+      allow create: if isStaffOrHigher() && isValidGameSalesLog();
+      allow update: if (isDocOwner() || isManagerOrAdmin()) && isValidGameSalesLog() && uidNotModified();
+      allow delete: if isDocOwner() || isManagerOrAdmin();
+    }
+
+    match /keno_logs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidKenoLog() && (!('verified' in request.resource.data) || request.resource.data.verified == false || isManagerOrAdmin());
+      allow update: if isManagerOrAdmin() && isValidKenoLog() && uidNotModified();
+      allow delete: if isManagerOrAdmin();
+    }
+
+    match /credits/{creditId} {
+      allow read: if isManagerOrAdmin();
+      allow create: if isManagerOrAdmin() && isValidCredit();
+      allow update: if isManagerOrAdmin() && isValidCredit() && uidNotModified();
+      allow delete: if isManagerOrAdmin();
+    }
+
+    match /expenses/{expenseId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidExpense() && (!('verified' in request.resource.data) || request.resource.data.verified == false || isManagerOrAdmin());
+      allow update: if isManagerOrAdmin() && isValidExpense() && uidNotModified();
+      allow delete: if isManagerOrAdmin();
+    }
+  }
+}
