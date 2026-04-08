@@ -19,7 +19,8 @@ const getShopStartOfDay = (date: Date = new Date()) => {
 const getShopEndOfDay = (date: Date = new Date()) => {
   return endOfDay(getShopDate(date));
 };
-import { LogOut, LayoutDashboard, Gamepad2, Coins, Receipt, CreditCard, Settings, Loader2, Edit2, Trash2, X, Users, BarChart, ClipboardList } from 'lucide-react';
+import { UserManagement } from './components/UserManagement';
+import { LogOut, LayoutDashboard, Gamepad2, Coins, Receipt, CreditCard, Settings, Loader2, Edit2, Trash2, X, Users, BarChart, ClipboardList, UserCog } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 
 import { Button } from './components/ui/button';
@@ -236,6 +237,7 @@ function Layout({ children }: { children: React.ReactNode }) {
     { path: '/salary-report', label: 'Salary Report', icon: Users, roles: ['admin', 'manager'] },
     { path: '/reports', label: 'Reports', icon: BarChart, roles: ['admin', 'manager'] },
     { path: '/audit-logs', label: 'Activity Log', icon: ClipboardList, roles: ['admin'] },
+    { path: '/admin/users', label: 'User Management', icon: UserCog, roles: ['admin'] },
     { path: '/admin', label: 'Admin', icon: Settings, roles: ['admin'] },
   ];
 
@@ -2363,6 +2365,7 @@ export default function App() {
                 <>
                   <Route path="/admin" element={<Admin />} />
                   <Route path="/audit-logs" element={<AuditLogs />} />
+                  <Route path="/admin/users" element={<UserManagement />} />
                 </>
               )}
               
